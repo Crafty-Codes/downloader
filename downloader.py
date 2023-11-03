@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from tqdm import tqdm
 import os
+import json
+import time
 
 # Function to get the HTML content from a URL
 def get_html(url):
@@ -16,7 +18,7 @@ def get_html(url):
 # Function to find the href preceding the specific <i> tag
 def find_preceding_href(html):
     soup = BeautifulSoup(html, 'html.parser')
-    icon_tag = soup.find('i', class_="icon Vidoza")
+    icon_tag = soup.find('i', class_="icon Streamtape")
     if icon_tag:
         prev_tag = icon_tag.find_previous('a', class_="watchEpisode")
         if prev_tag:
@@ -24,17 +26,18 @@ def find_preceding_href(html):
     return None
 
 # Function to find the video src attribute from the downloaded HTML
-def find_video_src(html):
+def find_video_id(html):
     soup = BeautifulSoup(html, 'html.parser')
-    video_tag = soup.find('video')
-    if video_tag:
-    #     return video_tag.get('src')
-    # else:
-        # If the <video> tag does not have src, check for <source> inside it
-        source_tag = soup.find('source')
-        if source_tag:
-            return source_tag.get('src')
-    return None
+    html_snippet = soup.findAll('meta')
+    og_url_content = None
+    for meta_tag in html_snippet:
+        if meta_tag.get('name') == 'og:url':
+            og_url_content = meta_tag.get('content')
+            break
+
+    url_parts = og_url_content.split('/')
+    code = url_parts[-1]
+    return code
 
 # Get the initial HTML content
 def get_video_link(url):
@@ -50,7 +53,7 @@ def get_video_link(url):
             second_html = get_html(full_url)
             if second_html:
             # Find the video src
-                video_src = find_video_src(second_html)
+                video_src = find_video_id(second_html)
                 if video_src:
                     return video_src
                     # print(f"Video src found: {video_src}")
@@ -72,6 +75,7 @@ headers = {
 staffel = 1
 episode = 1
 
+
 while True:
     # Construct URL
     url = base_url_pattern.format(staffel=staffel, episode=episode)
@@ -81,15 +85,30 @@ while True:
     # If the request is successful, print the URL and increment the episode number
     if response.status_code == 200 and len(response.text) != 0:
         print(f"Valid URL: {url}")
-        video_url = get_video_link(url)
 
-        output = f"steel-buddies/season-{staffel}"
+
+        file = get_video_link(url)
+
+        download_ticket = f"https://api.streamtape.com/file/dlticket?file={file}&login={login}&key={key}"
+        ticket_request = requests.get(download_ticket).text
+        ticket = json.loads(ticket_request)['result']['ticket']
+        wait_time = json.loads(ticket_request)['result']['wait_time']
+
+        time.sleep(wait_time + 5)
+
+        download_link = f"https://api.streamtape.com/file/dl?file={file}&ticket={ticket}"
+        data = json.loads(requests.get(download_link).text)
+        print(data)
+        video_url = data['result']['url']
+        video_name = data['result']['name']
+
+        output = f"steel-buddies/season-{staffel}/"
 
         if not os.path.exists(output):
             # Create a new directory because it does not exist
             os.makedirs(output)
 
-        output_path = output + f"/episode-{episode}.mp4"
+        output_path = output + video_name
 
         # Stream the video content in chunks
         response = requests.get(video_url, stream=True)
